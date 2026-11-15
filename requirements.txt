@@ -1,4 +1,5 @@
 torch
-tiktoken
+pyyaml
+tokenizers
 datasets
-huggingface_hub
+pytest

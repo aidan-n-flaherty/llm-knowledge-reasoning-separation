@@ -1,0 +1,29 @@
+# Tiny CPU run used by scripts/smoke.sh to check the pipeline end to end.
+run_name: smoke
+out_dir: runs
+data:
+  dir: data/generated/smoke
+  max_len: 250
+model:
+  context_length: 256
+  emb_dim: 64
+  n_heads: 4
+  n_kv_groups: 2
+  n_layers: 4
+  hidden_dim: 128
+memory:
+  kind: entity_block
+  layers: [1, 2]
+  slots: 2
+  key_dim: 16
+  value_dim: 16
+objective:
+  masked_pass: true
+train:
+  max_steps: 60
+  batch_size: 16
+  warmup_steps: 10
+  log_every: 20
+  eval_every: 30
+  ckpt_every: 30
+  eval_max_examples: 64

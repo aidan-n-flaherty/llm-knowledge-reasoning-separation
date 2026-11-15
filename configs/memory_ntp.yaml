@@ -1,0 +1,4 @@
+# B2: per-entity memory fetched by ID, plain next-token loss (no masked pass).
+run_name: memory_ntp
+memory:
+  kind: entity_block
