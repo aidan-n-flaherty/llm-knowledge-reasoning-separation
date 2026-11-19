@@ -30,7 +30,7 @@ EVAL_EXAMPLES = 10
 EVAL_PRINT=10
 EVAL_MAX_NEW_TOKENS = 128
 COQA_STORY_CHARS = 500
-SAVE_PATH = "llama3_1b_triviaqa.pt"
+SAVE_PATH = "llm_weights.pt"
 SEED = 0
 
 REFUSALS = [

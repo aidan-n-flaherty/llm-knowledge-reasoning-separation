@@ -1,4 +1,0 @@
-# B0: standard transformer, no memory.
-run_name: vanilla
-memory:
-  kind: none

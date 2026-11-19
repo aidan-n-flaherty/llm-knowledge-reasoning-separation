@@ -1,8 +1,0 @@
-# Per-entity memory with a memory-masked pass: the base must model non-fact tokens on its own.
-# masked_fact_loss is "none" here; objective variants replace it on their branches.
-run_name: memory_twopass
-memory:
-  kind: entity_block
-objective:
-  masked_pass: true
-  masked_fact_loss: none
