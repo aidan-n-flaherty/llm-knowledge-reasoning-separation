@@ -4,13 +4,40 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from krs.model.memory import build_memory
+"""LLAMA32_CONFIG_1B = {
+    "vocab_size": 128_256,
+    "context_length": 131_072,
+    "emb_dim": 2048,
+    "n_heads": 32,
+    "n_layers": 16,
+    "hidden_dim": 8192,
+    "n_kv_groups": 8,
+    "rope_base": 500_000.0,
+    "norm_eps": 1e-5,
+    "rope_freq": {
+        "factor": 32.0,
+        "low_freq_factor": 1.0,
+        "high_freq_factor": 4.0,
+        "original_context_length": 8192,
+    },
+}"""
 
-ROPE_FREQ = {
-    "factor": 32.0,
-    "low_freq_factor": 1.0,
-    "high_freq_factor": 4.0,
-    "original_context_length": 8192,
+LLAMA32_CONFIG_1B = {
+    "vocab_size": 128_256,
+    "context_length": 512,
+    "emb_dim": 1024,
+    "n_heads": 32,
+    "n_layers": 12,
+    "hidden_dim": 2048,
+    "n_kv_groups": 8,
+    "rope_base": 500_000.0,
+    "norm_eps": 1e-5,
+    "rope_freq": {
+        "factor": 32.0,
+        "low_freq_factor": 1.0,
+        "high_freq_factor": 4.0,
+        "original_context_length": 8192,
+    },
 }
 
 
@@ -56,9 +83,9 @@ def apply_rope(x, cos, sin):
 class FeedForward(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.gate_proj = nn.Linear(cfg.emb_dim, cfg.hidden_dim, bias=False)
-        self.up_proj = nn.Linear(cfg.emb_dim, cfg.hidden_dim, bias=False)
-        self.down_proj = nn.Linear(cfg.hidden_dim, cfg.emb_dim, bias=False)
+        self.gate_proj = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"], bias=False)
+        self.up_proj = nn.Linear(cfg["emb_dim"], cfg["hidden_dim"], bias=False)
+        self.down_proj = nn.Linear(cfg["hidden_dim"], cfg["emb_dim"], bias=False)
 
     def forward(self, x):
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
@@ -67,13 +94,13 @@ class FeedForward(nn.Module):
 class GroupedQueryAttention(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.n_heads = cfg.n_heads
-        self.n_kv_groups = cfg.n_kv_groups
-        self.head_dim = cfg.emb_dim // cfg.n_heads
-        self.q_proj = nn.Linear(cfg.emb_dim, self.n_heads * self.head_dim, bias=False)
-        self.k_proj = nn.Linear(cfg.emb_dim, self.n_kv_groups * self.head_dim, bias=False)
-        self.v_proj = nn.Linear(cfg.emb_dim, self.n_kv_groups * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.n_heads * self.head_dim, cfg.emb_dim, bias=False)
+        self.n_heads = cfg["n_heads"]
+        self.n_kv_groups = cfg["n_kv_groups"]
+        self.head_dim = cfg["emb_dim"] // cfg["n_heads"]
+        self.q_proj = nn.Linear(cfg["emb_dim"], self.n_heads * self.head_dim, bias=False)
+        self.k_proj = nn.Linear(cfg["emb_dim"], self.n_kv_groups * self.head_dim, bias=False)
+        self.v_proj = nn.Linear(cfg["emb_dim"], self.n_kv_groups * self.head_dim, bias=False)
+        self.o_proj = nn.Linear(self.n_heads * self.head_dim, cfg["emb_dim"], bias=False)
 
     def forward(self, x, cos, sin):
         B, T, _ = x.shape
@@ -95,51 +122,43 @@ class GroupedQueryAttention(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.input_layernorm = RMSNorm(cfg.emb_dim, cfg.norm_eps)
+        self.input_layernorm = RMSNorm(cfg["emb_dim"], cfg["norm_eps"])
         self.self_attn = GroupedQueryAttention(cfg)
-        self.post_attention_layernorm = RMSNorm(cfg.emb_dim, cfg.norm_eps)
+        self.post_attention_layernorm = RMSNorm(cfg["emb_dim"], cfg["norm_eps"])
         self.mlp = FeedForward(cfg)
 
-    def forward(self, x, cos, sin, read_memory=None):
+    def forward(self, x, cos, sin):
         x = x + self.self_attn(self.input_layernorm(x), cos, sin)
-        h = self.post_attention_layernorm(x)
-        out = x + self.mlp(h)
-        if read_memory is not None:
-            out = out + read_memory(h)
-        return out
+        return x + self.mlp(self.post_attention_layernorm(x))
 
 
 class Llama3Model(nn.Module):
-    def __init__(self, cfg, vocab_size, n_entities):
+    def __init__(self, cfg=LLAMA32_CONFIG_1B):
         super().__init__()
-        m = cfg.model
-        self.embed_tokens = nn.Embedding(vocab_size, m.emb_dim)
-        self.layers = nn.ModuleList(TransformerBlock(m) for _ in range(m.n_layers))
-        self.norm = RMSNorm(m.emb_dim, m.norm_eps)
-        self.lm_head = nn.Linear(m.emb_dim, vocab_size, bias=False)
+        self.cfg = cfg
+        self.embed_tokens = nn.Embedding(cfg["vocab_size"], cfg["emb_dim"])
+        self.layers = nn.ModuleList(TransformerBlock(cfg) for _ in range(cfg["n_layers"]))
+        self.norm = RMSNorm(cfg["emb_dim"], cfg["norm_eps"])
+        self.lm_head = nn.Linear(cfg["emb_dim"], cfg["vocab_size"], bias=False)
         self.lm_head.weight = self.embed_tokens.weight
 
-        cos, sin = precompute_rope(m.emb_dim // m.n_heads, m.rope_base, m.context_length, ROPE_FREQ)
+        cos, sin = precompute_rope(
+            cfg["emb_dim"] // cfg["n_heads"], cfg["rope_base"], cfg["context_length"], cfg["rope_freq"]
+        )
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
 
         self.apply(self._init_weights)
-        # built after the base init so the memory keeps its own initialisation
-        self.memory = build_memory(cfg, n_entities)
 
     @staticmethod
     def _init_weights(m):
         if isinstance(m, (nn.Linear, nn.Embedding)):
             nn.init.normal_(m.weight, mean=0.0, std=0.02)
 
-    def forward(self, tokens, ctx=None):
-        """ctx: MemoryContext, or None to run the base model with no memory read."""
+    def forward(self, tokens):
         T = tokens.shape[1]
         x = self.embed_tokens(tokens)
         cos, sin = self.cos[:T], self.sin[:T]
-        for i, layer in enumerate(self.layers):
-            read = None
-            if ctx is not None and i in self.memory.layers:
-                read = lambda h, i=i: self.memory(i, h, ctx)
-            x = layer(x, cos, sin, read)
+        for layer in self.layers:
+            x = layer(x, cos, sin)
         return self.lm_head(self.norm(x))
